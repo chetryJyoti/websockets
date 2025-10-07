@@ -211,12 +211,12 @@ Uses an optimized bitwise algorithm:
 
 ## 🔍 Current Features
 
-✅ Real-time gameplay with WebSocket communication
-✅ Turn-based validation
-✅ Automatic win detection
-✅ Error handling for invalid moves
-✅ Debug logging for development
-✅ Same-browser multiplayer
+- ✅ Real-time gameplay with WebSocket communication
+- ✅ Turn-based validation
+- ✅ Automatic win detection
+- ✅ Error handling for invalid moves
+- ✅ Debug logging for development
+- ✅ Same-browser multiplayer
 
 ## 📝 Limitations
 
