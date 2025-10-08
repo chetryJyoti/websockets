@@ -41,23 +41,33 @@ websockets/
 ### Backend (Python)
 
 #### `src/app.py`
-**WebSocket server that coordinates the game**
+**WebSocket server that coordinates multiplayer games**
 
 - Listens on `ws://localhost:8001`
-- Creates a new game instance for each connection
-- Receives player moves from the client
-- Validates moves using game logic
-- Broadcasts results back to the client
-- Manages turn alternation using `itertools.cycle`
-- Includes debug logging for all messages
+- Supports multiple concurrent games with unique tokens
+- Routes connections to start/join/watch handlers
+- Broadcasts moves to all connected clients in a game
+- Manages player connections and cleanup
 
 **Key Functions:**
-- `handler(websocket)` - Handles WebSocket connections and game flow
-- `main()` - Starts the WebSocket server
+- `handler(websocket)` - Main connection handler, routes based on init event
+- `start(websocket)` - Creates new game for Player 1, generates join/watch tokens
+- `join(websocket, join_key)` - Adds Player 2 to existing game
+- `watch(websocket, watch_key)` - Adds spectator to game
+- `play(websocket, game, player, connected)` - Handles move events and broadcasts
+- `replay(websocket, game)` - Sends previous moves to new connections
+- `error(websocket, message)` - Sends error messages
+
+**Global State:**
+- `JOIN` - Dictionary mapping join tokens to games
+- `WATCH` - Dictionary mapping watch tokens to games
 
 **Message Types:**
-- **Receives**: `{"type": "play", "column": 0-6}`
+- **Receives**:
+  - Init: `{"type": "init"}` or `{"type": "init", "join": "token"}` or `{"type": "init", "watch": "token"}`
+  - Play: `{"type": "play", "column": 0-6}`
 - **Sends**:
+  - Init: `{"type": "init", "join": "token", "watch": "token"}`
   - Play event: `{"type": "play", "player": "red/yellow", "column": N, "row": N}`
   - Error event: `{"type": "error", "message": "..."}`
   - Win event: `{"type": "win", "player": "red/yellow"}`
@@ -86,9 +96,10 @@ websockets/
 #### `src/index.html`
 **Minimal HTML entry point**
 
+- Contains action buttons: New, Join, Watch
 - Contains a `<div class="board">` container
 - Loads `main.js` as an ES6 module
-- JavaScript dynamically builds the game grid
+- JavaScript dynamically builds the game grid and updates link hrefs
 
 #### `src/main.js`
 **WebSocket client controller**
@@ -96,18 +107,22 @@ websockets/
 - Establishes WebSocket connection to server
 - Coordinates between UI events and server communication
 - Handles incoming messages and updates the UI accordingly
+- Manages game modes (start/join/watch)
 
 **Key Functions:**
-- `sendMoves(board, websocket)` - Listens for clicks, sends play events to server
-- `receiveMoves(board, websocket)` - Processes server messages (play, win, error)
+- `initGame(websocket)` - Sends init event with URL parameters (join/watch tokens)
+- `sendMoves(board, websocket)` - Listens for clicks, sends play events (disabled for spectators)
+- `receiveMoves(board, websocket)` - Processes server messages and updates join/watch links
 - `showMessage(message)` - Displays alerts for game events
 
 **Event Flow:**
-1. User clicks a column
-2. Sends column number to server
-3. Receives validated move with row position
-4. Updates UI with the piece placement
-5. Shows winner alert if game ends
+1. WebSocket opens → Send init event (with join/watch token if present)
+2. Receive init response → Update join/watch link hrefs
+3. User clicks a column (if not spectating)
+4. Send column number to server
+5. Receive validated move with row position
+6. Update UI with the piece placement
+7. Show winner alert if game ends
 
 #### `src/connect4.js`
 **UI rendering and board management**
@@ -151,47 +166,76 @@ websockets/
 
 ### Running the Game
 
-1. **Start the HTTP server** (serves frontend files)
+1. **Start the WebSocket server**
    ```bash
-   python -m http.server
-   ```
-   This starts on `http://localhost:8000`
-
-2. **Start the WebSocket server** (in a new terminal)
-   ```bash
-   python src/app.py
+   cd src
+   python app.py
    ```
    This starts on `ws://localhost:8001`
 
-3. **Open the game in your browser**
-   ```
-   http://localhost:8000/src/index.html
-   ```
+2. **Open the game in your browser**
+   - Open `src/index.html` directly in your browser
+   - Or use a local HTTP server:
+     ```bash
+     python -m http.server
+     # Then visit http://localhost:8000/src/index.html
+     ```
 
-### Alternative: CLI Connection
-You can also connect via command line:
-```bash
-websockets ws://localhost:8001/
-```
+3. **Start a new game**
+   - Click the **New** button to start as Player 1 (red)
+   - The Join and Watch links will appear
+
+4. **Add a second player**
+   - Copy the **Join** link URL
+   - Open it in another browser window/tab or share with another player
+   - Player 2 (yellow) can now play
+
+5. **Add spectators** (optional)
+   - Copy the **Watch** link URL
+   - Spectators can see all moves but cannot play
 
 ## 🎯 How It Works
 
 ### Complete Game Flow
 
+**Player 1 (Starting a game):**
 1. **Browser loads** → `index.html` loads `main.js`
 2. **UI initialization** → `createBoard()` builds the grid
 3. **WebSocket connection** → Connects to `ws://localhost:8001`
-4. **User clicks column** → JavaScript sends play event
-5. **Server validates** → Checks turn order and column availability
-6. **Server responds** → Sends back row position or error
-7. **UI updates** → Piece appears in the correct cell
-8. **Turn switches** → Next player's turn begins
-9. **Game ends** → Server detects winner and sends win event
+4. **Send init event** → `{"type": "init"}` (no join/watch token)
+5. **Server creates game** → Generates unique join and watch tokens
+6. **Receive init response** → Join and Watch links become active
+7. **Make moves** → Click columns to play as red
+
+**Player 2 (Joining a game):**
+1. **Click Join link** → Opens page with `?join=token` in URL
+2. **WebSocket connects** → Sends `{"type": "init", "join": "token"}`
+3. **Server finds game** → Adds Player 2 to existing game
+4. **Replay moves** → Receives all previous moves to sync board state
+5. **Make moves** → Click columns to play as yellow
+
+**Spectator (Watching a game):**
+1. **Click Watch link** → Opens page with `?watch=token` in URL
+2. **WebSocket connects** → Sends `{"type": "init", "watch": "token"}`
+3. **Server finds game** → Adds spectator to broadcast list
+4. **Replay moves** → Receives all previous moves
+5. **View only** → Cannot make moves, only watch
+
+**During Gameplay:**
+1. **User clicks column** → JavaScript sends play event
+2. **Server validates** → Checks turn order and column availability
+3. **Server broadcasts** → Sends move to all connected clients (both players + spectators)
+4. **All UIs update** → Piece appears in the correct cell on all screens
+5. **Turn switches** → Next player's turn begins
+6. **Game ends** → Server detects winner and broadcasts win event to all
 
 ### Key Technologies
 
 - **WebSockets** - Bidirectional real-time communication
 - **Python asyncio** - Asynchronous server handling
+- **Broadcasting** - `websockets.asyncio.server.broadcast()` for multiplayer sync
+- **URL Parameters** - Query strings for join/watch links (`?join=token`)
+- **Secret Tokens** - `secrets.token_urlsafe()` for secure game access
 - **ES6 Modules** - Modern JavaScript structure
 - **Bitwise Operations** - Efficient win detection algorithm
 
@@ -199,8 +243,9 @@ websockets ws://localhost:8001/
 
 Players alternate automatically:
 - Red (PLAYER1) always goes first
-- Server uses `itertools.cycle([red, yellow])` for infinite turn rotation
+- Game logic tracks `last_player` and enforces turn order
 - Invalid moves don't advance the turn
+- Error sent if player tries to move out of turn
 
 ### Win Detection
 
@@ -211,19 +256,22 @@ Uses an optimized bitwise algorithm:
 
 ## 🔍 Current Features
 
-- ✅ Real-time gameplay with WebSocket communication
+- ✅ Real-time multiplayer gameplay with WebSocket communication
+- ✅ **Multi-browser support** - Players can join from different browsers/devices
+- ✅ **Spectator mode** - Watch ongoing games without participating
+- ✅ **Game broadcasting** - All connected clients see moves instantly
+- ✅ **Secure game sessions** - Unique join and watch tokens for each game
+- ✅ **Move replay** - Players joining mid-game see all previous moves
 - ✅ Turn-based validation
 - ✅ Automatic win detection
 - ✅ Error handling for invalid moves
-- ✅ Debug logging for development
-- ✅ Same-browser multiplayer
+- ✅ Connection management with automatic cleanup
 
 ## 📝 Limitations
 
-- Both players share the same browser (no separate clients)
-- No game reset button (must refresh page)
+- No game reset button - click "New" to start fresh
 - No draw/tie detection
-- One game per WebSocket connection
+- Join/watch links expire when host disconnects
 - No player selection (red always starts)
 
 ## 🛠️ Development Notes
